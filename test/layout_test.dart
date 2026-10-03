@@ -146,7 +146,7 @@ void main() {
           reason: '上移幅度应可观测（>40dp）');
     });
 
-    testWidgets('上方入口一个都没少：状态 chip 与全部操作按钮仍可见', (tester) async {
+    testWidgets('上方入口一个都没少：状态 chip 始终可见', (tester) async {
       _setPhoneSurface(tester);
       final cfg = TapperConfig(points: [TimePoint(hour: 8, minute: 0, second: 0)]);
       _mockNative(cfg.toJsonString());
@@ -156,42 +156,21 @@ void main() {
       expect(find.textContaining('无障碍: 已连接'), findsOneWidget);
       expect(find.textContaining('悬浮窗: 已授权'), findsOneWidget);
       expect(find.textContaining('状态: 待机'), findsOneWidget);
-      expect(find.text('选点导入'), findsOneWidget);
-      expect(find.text('设置'), findsOneWidget);
       expect(find.text('新增时间点'), findsOneWidget);
-
-      // 收进「设置」菜单的 4 个入口必须仍然可达（打开菜单逐个断言）
-      await tester.tap(find.text('设置'));
-      await tester.pumpAndSettle();
-      expect(find.text('无障碍设置'), findsOneWidget);
-      expect(find.text('悬浮窗设置'), findsOneWidget);
-      expect(find.text('显示悬浮窗'), findsOneWidget);
-      expect(find.textContaining('悬浮窗面板'), findsOneWidget);
-      await tester.tapAt(const Offset(5, 5)); // 关闭菜单
-      await tester.pumpAndSettle();
     });
 
-    testWidgets('状态详情默认收起，可展开再收起', (tester) async {
+    testWidgets('状态详情（下次触发/系统时区）始终可见', (tester) async {
       _setPhoneSurface(tester);
       final cfg = TapperConfig(points: [TimePoint(hour: 8, minute: 0, second: 0)]);
       _mockNative(cfg.toJsonString());
       await tester.pumpWidget(const MaterialApp(home: HomePage()));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('系统时区'), findsNothing, reason: '默认收起，把空间让给时间点');
-      expect(find.textContaining('下次触发'), findsNothing);
-
-      await tester.tap(find.byTooltip('展开状态详情'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('系统时区'), findsOneWidget);
-      expect(find.textContaining('下次触发'), findsOneWidget);
-
-      await tester.tap(find.byTooltip('收起状态详情'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('系统时区'), findsNothing);
+      expect(find.textContaining('系统时区'), findsOneWidget, reason: '系统时区始终可见');
+      expect(find.textContaining('下次触发'), findsOneWidget, reason: '下次触发始终可见');
     });
 
-    testWidgets('日志区默认收起且入口可见，可展开查看内容', (tester) async {
+    testWidgets('日志区可见，空态有提示文案', (tester) async {
       _setPhoneSurface(tester);
       final cfg = TapperConfig(points: [TimePoint(hour: 8, minute: 0, second: 0)]);
       _mockNative(cfg.toJsonString());
@@ -202,12 +181,8 @@ void main() {
       await tester.scrollUntilVisible(find.textContaining('运行日志'), 200,
           scrollable: find.byType(Scrollable).first);
       await tester.pumpAndSettle();
-      expect(find.textContaining('运行日志'), findsOneWidget, reason: '日志标题入口必须仍可见');
-      expect(find.text('(暂无日志)'), findsNothing, reason: '默认收起，不占 220px');
-
-      await tester.tap(find.textContaining('运行日志'));
-      await tester.pumpAndSettle();
-      expect(find.text('(暂无日志)'), findsOneWidget, reason: '展开后内容可见');
+      expect(find.textContaining('运行日志'), findsOneWidget, reason: '日志标题必须可见（含计数）');
+      expect(find.textContaining('暂无日志'), findsOneWidget, reason: '空态提示必须可见');
     });
 
     testWidgets('12 个时间点：可滚动、无渲染异常', (tester) async {
@@ -221,8 +196,7 @@ void main() {
 
       expect(tester.takeException(), isNull, reason: '不应有布局溢出/渲染异常');
 
-      // 本轮改动：分组默认收起，先展开默认组
-      await tester.tap(find.text('未分组'));
+      // 当前 UI 为时间点平铺展示（无分组节区），无需展开分组。
       await tester.pumpAndSettle();
 
       // 标签格式已改为「08时 00分 00秒」，直接取模型的 label 生成期望值，

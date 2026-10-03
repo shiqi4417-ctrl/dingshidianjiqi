@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
@@ -423,20 +424,13 @@ class OverlayService : Service() {
             private var startX = 0
             private var startY = 0
             private var moved = false
-            private var longFired = false
-            private val longPress = Runnable {
-                longFired = true
-                overlayEnabled = false
-                removeOverlay()
-            }
+            private var lastTapUp = 0L
             override fun onTouch(v: View, e: MotionEvent): Boolean {
                 when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         downX = e.rawX; downY = e.rawY
                         startX = lp.x; startY = lp.y
                         moved = false
-                        longFired = false
-                        handler.postDelayed(longPress, 700L)
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -444,7 +438,6 @@ class OverlayService : Service() {
                         val dy = e.rawY - downY
                         if (abs(dx) > dp(8) || abs(dy) > dp(8)) {
                             moved = true
-                            handler.removeCallbacks(longPress)
                         }
                         if (moved) {
                             val dm = resources.displayMetrics
@@ -455,12 +448,15 @@ class OverlayService : Service() {
                         return true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        handler.removeCallbacks(longPress)
-                        // 悬浮球本体即面板：单击不再弹出/收起独立面板（面板已并入悬浮球）。
-                        // 长按仍隐藏；拖动已在上方 ACTION_MOVE 处理。
-                        if (e.actionMasked == MotionEvent.ACTION_UP && longFired) {
-                            overlayEnabled = false
-                            removeOverlay()
+                        // 悬浮球本体即面板：拖动移动；双击返回 App 主界面（长按隐藏已按用户要求移除）。
+                        if (e.actionMasked == MotionEvent.ACTION_UP && !moved) {
+                            val now = SystemClock.uptimeMillis()
+                            if (now - lastTapUp in 1..DOUBLE_TAP_MS) {
+                                lastTapUp = 0L
+                                openMainScreen()
+                            } else {
+                                lastTapUp = now
+                            }
                         }
                         return true
                     }
@@ -473,7 +469,7 @@ class OverlayService : Service() {
             wm.addView(root, lp)
             bubble = root
             bubbleLp = lp
-            LogBus.add(applicationContext, "OK", "悬浮窗已显示（可拖动，单击=展开设置，长按=隐藏）")
+            LogBus.add(applicationContext, "OK", "悬浮窗已显示（可拖动，双击=返回主界面）")
         } catch (t: Throwable) {
             LogBus.add(applicationContext, "ERROR", "悬浮窗添加失败: " + t)
         }
@@ -489,6 +485,18 @@ class OverlayService : Service() {
         clockNote = null
         LogBus.add(applicationContext, "WARN", "悬浮窗已隐藏")
         TapperPlugin.emitState(this)
+    }
+
+    /** 双击悬浮球：回到 App 主界面（复用通知栏点击的启动方式）。 */
+    private fun openMainScreen() {
+        try {
+            val i = Intent(this, MainActivity::class.java)
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            startActivity(i)
+            LogBus.add(applicationContext, "OK", "双击悬浮球，打开主界面")
+        } catch (t: Throwable) {
+            LogBus.add(applicationContext, "ERROR", "打开主界面失败: " + t)
+        }
     }
 
     private fun setBubbleText(s: String) {
@@ -1122,6 +1130,7 @@ class OverlayService : Service() {
     private inner class CatcherView : View(this@OverlayService) {
         private var px = -1f
         private var py = -1f
+        private var lastTapTime = 0L
         private val ring = Paint().apply {
             color = Color.parseColor("#FFFFFFFF"); strokeWidth = 6f; style = Paint.Style.STROKE; isAntiAlias = true
         }
@@ -1154,6 +1163,19 @@ class OverlayService : Service() {
                         .putExtra("sw", dm.widthPixels).putExtra("sh", dm.heightPixels)
                 )
                 // 多点连击：持续累积坐标（供选点导入/历史参考），不自动退出取点模式
+                // 记录"上一个坐标点到当前坐标点"的时间间隔，作为**上一步的延迟**自动填入，
+                // 这样点击顺序的节奏会被保留，无需再手动逐步改延时。
+                val now = SystemClock.uptimeMillis()
+                if (pendingSteps.isNotEmpty()) {
+                    val elapsed = (now - lastTapTime).coerceIn(0L, MAX_STEP_DELAY_MS)
+                    pendingSteps = pendingSteps.dropLast(1) +
+                        pendingSteps.last().copy(delayMs = elapsed)
+                    LogBus.add(
+                        applicationContext, "PICK",
+                        "自动填入上一步延迟 " + elapsed + "ms（本点到上一点间隔）"
+                    )
+                }
+                lastTapTime = now
                 pendingSteps = pendingSteps + Step(sx, sy, 200L, dm.widthPixels, dm.heightPixels)
                 return true
             }
@@ -1163,6 +1185,12 @@ class OverlayService : Service() {
 
     companion object {
         private const val NOTIF_ID = 0x5401
+
+        /** 双击悬浮球判定窗口（毫秒）。 */
+        private const val DOUBLE_TAP_MS = 300L
+
+        /** 取点自动填入的上一步延迟上限（毫秒，1 小时），超出按上限夹取。 */
+        private const val MAX_STEP_DELAY_MS = 3_600_000L
 
         @Volatile
         var schedulerRef: Scheduler? = null

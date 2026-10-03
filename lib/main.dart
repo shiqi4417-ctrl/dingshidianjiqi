@@ -277,7 +277,18 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _deletePoint(int index) async {
-    setState(() => _cfg.points.removeAt(index));
+    final gid = index >= 0 && index < _cfg.points.length ? _cfg.points[index].groupId : '';
+    setState(() {
+      if (index >= 0 && index < _cfg.points.length) {
+        _cfg.points.removeAt(index);
+      }
+      // 删除时间点后，若它所属的分组再没有成员，则自动删除该空分组（默认组除外）。
+      if (gid.isNotEmpty && gid != TapperConfig.defaultGroupId &&
+          _cfg.groups.any((g) => g.id == gid) &&
+          !_cfg.points.any((p) => p.groupId == gid)) {
+        _cfg.groups.removeWhere((g) => g.id == gid);
+      }
+    });
     await _save();
   }
 
@@ -468,6 +479,12 @@ class _HomePageState extends State<HomePage> {
         leading: Switch(
           value: p.enabled,
           onChanged: (v) async {
+            // 开启定时点击前检查无障碍权限：未连接则不允许开启，提示并跳转设置
+            if (v && _state['a11y'] != true) {
+              _toast('请先开启无障碍权限，否则无法执行自动点击');
+              await Native.openAccessibilitySettings();
+              return;
+            }
             setState(() => p.enabled = v);
             await _save();
           },

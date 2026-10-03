@@ -5,23 +5,19 @@ import 'package:scheduled_tapper/models.dart';
 
 /// 阶段 2（时间点分组）的可观测验证：模型层。
 ///
-/// 覆盖：默认组、创建/重命名、持久化往返、旧数据兼容、删除分组的连带语义、
-/// 以及「引用处显示同步」所依赖的同一个数据源（groups 字段）。
+/// 覆盖：创建/重命名、持久化往返、旧数据兼容、删除分组的连带语义。
+/// 注意：主界面时间点已平铺展示；模型层不再强制存在默认组（可按需自建分组）。
 void main() {
   group('阶段2 · 分组模型', () {
-    test('新配置始终包含默认组「未分组」，且排在最前', () {
+    test('新配置默认不附带任何分组', () {
       final cfg = TapperConfig();
-      expect(cfg.groups.length, 1);
-      expect(cfg.groups.first.id, TapperConfig.defaultGroupId);
-      expect(cfg.groups.first.name, '未分组');
+      expect(cfg.groups, isEmpty);
     });
 
-    test('未分组的时间点归入默认组', () {
+    test('无分组时，时间点不归属任何组（grouped 结果为空）', () {
       final cfg = TapperConfig(points: [TimePoint(hour: 8), TimePoint(hour: 9)]);
       final grouped = cfg.grouped();
-      expect(grouped.length, 1);
-      expect(grouped.first.key.id, TapperConfig.defaultGroupId);
-      expect(grouped.first.value.length, 2, reason: '未分组时间点应全部归入默认组');
+      expect(grouped, isEmpty, reason: '没有分组时不产生孤儿归属');
     });
 
     test('可创建分组并把时间点归类', () {
@@ -29,17 +25,15 @@ void main() {
       final b = PointGroup(name: '晚班');
       final p1 = TimePoint(hour: 8, groupId: a.id);
       final p2 = TimePoint(hour: 20, groupId: b.id);
-      final p3 = TimePoint(hour: 12);
+      final p3 = TimePoint(hour: 12, groupId: a.id);
       final cfg = TapperConfig(points: [p1, p2, p3], groups: [a, b]);
 
       final grouped = cfg.grouped();
-      expect(grouped.length, 3, reason: '默认组 + 早班 + 晚班');
-      expect(grouped[0].key.name, '未分组');
-      expect(grouped[0].value.length, 1);
-      expect(grouped[1].key.name, '早班');
-      expect(grouped[1].value.single.id, p1.id);
-      expect(grouped[2].key.name, '晚班');
-      expect(grouped[2].value.single.id, p2.id);
+      expect(grouped.length, 2, reason: '早班 + 晚班');
+      expect(grouped[0].key.name, '早班');
+      expect(grouped[0].value.length, 2);
+      expect(grouped[1].key.name, '晚班');
+      expect(grouped[1].value.single.id, p2.id);
     });
 
     test('重命名分组后，所有引用处读到的是同一个新名称', () {
@@ -47,13 +41,16 @@ void main() {
       final cfg = TapperConfig(points: [TimePoint(hour: 8, groupId: g.id)], groups: [g]);
       g.name = '清晨班';
       // grouped() 每次实时读取 groups，因此主页面/悬浮窗/选择器（同一数据源）都会看到新名字
-      expect(cfg.grouped()[1].key.name, '清晨班');
+      expect(cfg.grouped()[0].key.name, '清晨班');
       expect(cfg.groupById(g.id)!.name, '清晨班');
     });
 
     test('允许空分组（存在但没有成员）', () {
       final empty = PointGroup(name: '空组');
-      final cfg = TapperConfig(points: [TimePoint(hour: 8)], groups: [empty]);
+      final busy = PointGroup(name: '有成员组');
+      // 把点明确归到 busy 组，让 empty 组保持空
+      final cfg = TapperConfig(
+          points: [TimePoint(hour: 8, groupId: busy.id)], groups: [empty, busy]);
       final grouped = cfg.grouped();
       final e = grouped.firstWhere((x) => x.key.id == empty.id);
       expect(e.value, isEmpty);
@@ -61,9 +58,12 @@ void main() {
 
     test('删除分组会连同组内时间点一起删除（模型层语义）', () {
       final g = PointGroup(name: '早班');
-      final keep = TimePoint(hour: 9);
-      final cfg = TapperConfig(points: [TimePoint(hour: 8, groupId: g.id), keep], groups: [g]);
-      // 与 main.dart _deleteGroup 相同的操作
+      final keepGroup = PointGroup(name: '保留组');
+      final keep = TimePoint(hour: 9, groupId: keepGroup.id);
+      final cfg = TapperConfig(
+          points: [TimePoint(hour: 8, groupId: g.id), keep],
+          groups: [g, keepGroup]);
+      // 与 main.dart 删除分组相同的操作
       cfg.points.removeWhere((p) => p.groupId == g.id);
       cfg.groups.removeWhere((x) => x.id == g.id);
       expect(cfg.points.length, 1);
@@ -71,18 +71,26 @@ void main() {
       expect(cfg.groups.length, 1);
     });
 
-    test('指向不存在分组的时间点回落到默认组（不产生孤儿）', () {
-      final cfg = TapperConfig(points: [TimePoint(hour: 8, groupId: '已删除的组')]);
+    test('指向不存在分组的时间点回落到第一个分组（不产生孤儿）', () {
+      final g = PointGroup(name: '早班');
+      final cfg = TapperConfig(
+          points: [TimePoint(hour: 8, groupId: '已删除的组')], groups: [g]);
       cfg.normalizePointGroups();
-      expect(cfg.points.single.groupId, TapperConfig.defaultGroupId);
+      expect(cfg.points.single.groupId, g.id);
       expect(cfg.grouped().first.value.length, 1);
     });
 
-    test('默认组可改名但 id 不变', () {
+    test('分组成员删除后，多余分组不自动删除（由主界面删除逻辑负责）', () {
+      final g = PointGroup(name: '早班');
+      final cfg = TapperConfig(points: [TimePoint(hour: 8, groupId: g.id)], groups: [g]);
+      cfg.points.removeWhere((p) => p.groupId == g.id);
+      expect(cfg.groups.length, 1, reason: '模型层不自动删空组，isDefaultGroup 判断在 UI 逻辑');
+    });
+
+    test('默认组标记：isDefaultGroup 仅对 defaultGroupId 成立', () {
       final cfg = TapperConfig();
-      cfg.groups.first.name = '我的默认组';
-      expect(cfg.groupById(TapperConfig.defaultGroupId)!.name, '我的默认组');
       expect(cfg.isDefaultGroup(TapperConfig.defaultGroupId), isTrue);
+      expect(cfg.isDefaultGroup('早班'), isFalse);
     });
   });
 
@@ -90,16 +98,16 @@ void main() {
     test('分组、名称与时间点归属经 JSON 往返后保持不变', () {
       final g = PointGroup(name: '早班');
       final cfg = TapperConfig(
-        points: [TimePoint(hour: 8, groupId: g.id), TimePoint(hour: 9)],
+        points: [TimePoint(hour: 8, groupId: g.id), TimePoint(hour: 9, groupId: g.id)],
         groups: [g],
       );
       final restored = TapperConfig.fromJsonString(cfg.toJsonString());
 
-      expect(restored.groups.length, 2);
-      expect(restored.groups[1].name, '早班');
-      expect(restored.groups[1].id, g.id);
+      expect(restored.groups.length, 1);
+      expect(restored.groups[0].name, '早班');
+      expect(restored.groups[0].id, g.id);
       expect(restored.points[0].groupId, g.id, reason: '时间点归属必须持久化');
-      expect(restored.points[1].groupId, TapperConfig.defaultGroupId);
+      expect(restored.points[1].groupId, g.id);
     });
 
     test('JSON 里确实写入了 groups 与 groupId 字段', () {
@@ -107,24 +115,23 @@ void main() {
       final cfg = TapperConfig(points: [TimePoint(hour: 8, groupId: g.id)], groups: [g]);
       final o = jsonDecode(cfg.toJsonString()) as Map<String, dynamic>;
       expect(o['groups'], isA<List>());
-      expect((o['groups'] as List).length, 2);
+      expect((o['groups'] as List).length, 1);
       expect((o['points'] as List).first['groupId'], g.id);
     });
 
-    test('旧数据（没有 groups/groupId）自动归入默认组，不报错', () {
+    test('旧数据（没有 groups/groupId）读取不报错，分组为空', () {
       const legacy = '{"version":1,"tapDurationMs":30,"points":['
           '{"id":"p1","hour":8,"minute":0,"second":0,"enabled":true,'
           '"repeatCount":1,"repeatIntervalMs":0,"steps":[]}]}';
       final cfg = TapperConfig.fromJsonString(legacy);
       expect(cfg.points.single.id, 'p1');
-      expect(cfg.points.single.groupId, TapperConfig.defaultGroupId);
-      expect(cfg.groups.length, 1);
-      expect(cfg.groups.single.name, '未分组');
+      // 兼容旧数据：旧 JSON 无 groups -> 当前按"无分组"处理，不强行制造默认组
+      expect(cfg.groups, isEmpty);
     });
 
     test('损坏的 JSON 不抛异常', () {
       expect(TapperConfig.fromJsonString('{不是json').points, isEmpty);
-      expect(TapperConfig.fromJsonString('{不是json').groups.length, 1);
+      expect(TapperConfig.fromJsonString('{不是json').groups, isEmpty);
     });
   });
 

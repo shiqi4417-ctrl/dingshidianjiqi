@@ -324,11 +324,17 @@ Future<TimeEditResult?> showTimeDialog(BuildContext context,
                   setLocal(() => intervalError = '请输入数字（0 或正整数毫秒）');
                   return;
                 }
-                // 分组必选：非新建分组必须有真实分组；新建分组必须命名非空。
+                // 分组必选：非新建分组必须有真实分组；新建分组必须命名非空且不重名。
                 if (isNewGroup) {
                   final nm = newGroupNameCtl.text.trim();
                   if (nm.isEmpty) {
                     setLocal(() => groupError = '请填写新分组名称');
+                    return;
+                  }
+                  final dup = groupList.any((g) => g.name.trim() == nm) ||
+                      nm == TapperConfig.defaultGroupName;
+                  if (dup) {
+                    setLocal(() => groupError = '分组名「$nm」已存在，请换一个');
                     return;
                   }
                 } else if (selGroupId.isEmpty) {
@@ -410,10 +416,24 @@ Widget _timeWheel({
 Future<List<PointGroup>?> showGroupManageDialog(
     BuildContext context, List<PointGroup> groups) {
   var list = List<PointGroup>.from(groups);
+  String? dupError;
   return showDialog<List<PointGroup>>(
     context: context,
     builder: (ctx) => StatefulBuilder(
       builder: (ctx, setLocal) {
+        /// 校验并就地标注重名（用于「新建/重命名」后即时提示）。
+        void noteDup(String? newName, {int? exceptIndex}) {
+          if (newName == null || newName.trim().isEmpty) return;
+          final nm = newName.trim();
+          for (var j = 0; j < list.length; j++) {
+            if (j == exceptIndex) continue;
+            if (list[j].name.trim() == nm) {
+              dupError = '分组名「$nm」已存在，请换一个';
+              return;
+            }
+          }
+          dupError = null;
+        }
         return AlertDialog(
           title: const Text('分组管理'),
           content: SizedBox(
@@ -421,6 +441,12 @@ Future<List<PointGroup>?> showGroupManageDialog(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (dupError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(dupError!,
+                        style: const TextStyle(fontSize: 12, color: Colors.red)),
+                  ),
                 Flexible(
                   child: ListView(
                     shrinkWrap: true,
@@ -446,6 +472,7 @@ Future<List<PointGroup>?> showGroupManageDialog(
                                       for (var j = 0; j < list.length; j++)
                                         j == i ? list[j].copyWith(name: name) : list[j],
                                     ];
+                                    noteDup(name, exceptIndex: i);
                                   });
                                 },
                               ),
@@ -457,6 +484,7 @@ Future<List<PointGroup>?> showGroupManageDialog(
                                     for (var j = 0; j < list.length; j++)
                                       if (j != i) list[j],
                                   ];
+                                  dupError = null;
                                 }),
                               ),
                             ],
@@ -473,6 +501,7 @@ Future<List<PointGroup>?> showGroupManageDialog(
                       if (name == null) return;
                       setLocal(() {
                         list = [...list, PointGroup(id: _newGroupId(), name: name)];
+                        noteDup(name);
                       });
                     },
                     icon: const Icon(Icons.add, size: 18),
@@ -485,7 +514,27 @@ Future<List<PointGroup>?> showGroupManageDialog(
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
             FilledButton(
-                onPressed: () => Navigator.pop(ctx, list), child: const Text('确定')),
+              onPressed: () {
+                // 分组名全局唯一：重名时不允许确定，原地报错
+                final seen = <String>{};
+                for (final g in list) {
+                  final nm = g.name.trim();
+                  if (nm.isEmpty) {
+                    dupError = '分组名不能为空';
+                    setLocal(() {});
+                    return;
+                  }
+                  if (!seen.add(nm)) {
+                    dupError = '分组名「$nm」已存在，请换一个';
+                    setLocal(() {});
+                    return;
+                  }
+                }
+                dupError = null;
+                Navigator.pop(ctx, list);
+              },
+              child: const Text('确定'),
+            ),
           ],
         );
       },
