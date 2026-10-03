@@ -24,6 +24,7 @@ class MainActivity : FlutterActivity() {
      */
     override fun onDestroy() {
         if (isFinishing) {
+            LogBus.add(applicationContext, "WARN", "检测到：按返回键退出应用，正在停用全部定时任务")
             OverlayService.stopSchedulingFromAppExit(applicationContext)
         }
         super.onDestroy()

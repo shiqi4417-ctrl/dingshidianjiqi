@@ -297,6 +297,7 @@ class OverlayService : Service() {
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         try {
+            LogBus.add(applicationContext, "WARN", "检测到：本应用已从最近任务划掉，正在停用全部定时任务")
             stopSchedulingFromAppExit(applicationContext)
         } finally {
             super.onTaskRemoved(rootIntent)
@@ -1172,6 +1173,13 @@ class OverlayService : Service() {
                         o.optInt("sw", 0), o.optInt("sh", 0), cw, ch
                     )
                 )
+                // 诊断：打印取点时坐标与当前换算结果，便于定位同机坐标偏差
+                LogBus.add(
+                    applicationContext, "DIAG",
+                    ("标记#" + i + " 原(" + o.optInt("x", 0) + "," + o.optInt("y", 0) + ") 取点屏" +
+                        o.optInt("sw", 0) + "x" + o.optInt("sh", 0) + " → 现屏" + cw + "x" + ch +
+                        " 后=" + coords[coords.size - 1][0] + "," + coords[coords.size - 1][1])
+                )
             }
         } catch (t: Throwable) {
             LogBus.add(applicationContext, "ERROR", "坐标标记解析失败: " + t)
@@ -1334,7 +1342,9 @@ class OverlayService : Service() {
             try {
                 val cfg = Prefs.load(ctx)
                 val disabled = cfg.copy(points = cfg.points.map { it.copy(enabled = false) })
-                Prefs.save(ctx, disabled)
+                // 退出时刻进程很可能即将被回收：必须同步落盘（.commit()），
+                // 异步的 .apply() 可能未写盘进程就没了，导致下次进入仍是开启状态。
+                Prefs.saveSync(ctx, disabled)
                 // 隐藏屏幕上的坐标标记（服务若存活，收到广播后移除；否则无副作用）
                 ctx.sendBroadcast(
                     Intent(LogBus.ACTION_CMD).setPackage(ctx.packageName).putExtra("cmd", "hideMarkers")
@@ -1343,7 +1353,7 @@ class OverlayService : Service() {
                 schedulerRef?.stop()
                 schedulerRef = null
                 ctx.stopService(Intent(ctx, OverlayService::class.java))
-                LogBus.add(ctx, "WARN", "已停止运行 APP：已停用全部定时任务，重新进入后均为关闭状态")
+                LogBus.add(ctx, "WARN", "已停止运行 APP：已停用全部定时任务并同步落盘")
             } catch (t: Throwable) {
                 LogBus.add(ctx, "ERROR", "退出收尾异常: " + t)
             }
