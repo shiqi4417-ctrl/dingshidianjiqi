@@ -133,6 +133,18 @@ class TapperPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 "closePanel" -> { sendCmd("closePanel"); result.success(true) }
                 "cancelPickMode" -> { sendCmd("cancelPick"); result.success(true) }
 
+                "showPointMarkers" -> {
+                    startOverlayService()
+                    val json = call.argument<String>("json") ?: "[]"
+                    ctx.sendBroadcast(
+                        Intent(LogBus.ACTION_CMD).setPackage(ctx.packageName)
+                            .putExtra("cmd", "showMarkers")
+                            .putExtra("steps", json)
+                    )
+                    result.success(true)
+                }
+                "hidePointMarkers" -> { sendCmd("hideMarkers"); result.success(true) }
+
                 "testTap" -> {
                     val x = call.argument<Int>("x") ?: 0
                     val y = call.argument<Int>("y") ?: 0

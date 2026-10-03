@@ -37,4 +37,11 @@ class Native {
 
   static Future<bool> runNow(String label, String json) async =>
       (await _m.invokeMethod('runNow', {'label': label, 'json': json})) as bool;
+
+  /// 在屏幕上显示某个时间点所有步骤坐标的十字+圆框标记（开启该时间点开关时调用）。
+  static Future<void> showPointMarkers(String json) async =>
+      _m.invokeMethod('showPointMarkers', {'json': json});
+
+  /// 移除屏幕上的坐标标记（关闭时间点开关，或全应用不显示任何已启用时间点时调用）。
+  static Future<void> hidePointMarkers() async => _m.invokeMethod('hidePointMarkers');
 }

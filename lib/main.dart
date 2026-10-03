@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -290,6 +291,9 @@ class _HomePageState extends State<HomePage> {
       }
     });
     await _save();
+    // 删除的是开启的时间点时，其屏幕上的坐标标记（十字+圆框+序号）需要一并移除，
+    // 否则会残留屏幕上。隐藏操作在原生侧幂等，未显示标记时调用无害。
+    await Native.hidePointMarkers();
   }
 
   /// 复制时间点：在同一分组下新建一条**内容完全一致**的新时间点。
@@ -487,6 +491,13 @@ class _HomePageState extends State<HomePage> {
             }
             setState(() => p.enabled = v);
             await _save();
+            // 开启时在屏幕上显示该时间点所有步骤的坐标标记（十字+圆框）；关闭则移除
+            if (v) {
+              final stepsJson = jsonEncode(p.steps.map((s) => s.toJson()).toList());
+              await Native.showPointMarkers(stepsJson);
+            } else {
+              await Native.hidePointMarkers();
+            }
           },
         ),
         title: Text(

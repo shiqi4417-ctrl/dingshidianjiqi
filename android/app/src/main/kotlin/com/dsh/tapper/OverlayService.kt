@@ -32,6 +32,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import kotlin.math.abs
+import org.json.JSONArray
 
 /**
  * 悬浮窗宿主 + 前台服务 + 定时调度宿主。
@@ -56,6 +57,9 @@ class OverlayService : Service() {
     /** 取点模式顶部的「完成」悬浮按钮（null 表示未显示）。 */
     private var doneBtn: View? = null
     private var doneBtnLp: WindowManager.LayoutParams? = null
+    /** 屏幕上常驻显示的坐标标记层（启用时间点时显示该时间点步骤的十字+圆框），null 表示未显示。 */
+    private var markers: View? = null
+    private var markersLp: WindowManager.LayoutParams? = null
 
     @Volatile private var pickMode = false
     private val handler = Handler(Looper.getMainLooper())
@@ -111,6 +115,8 @@ class OverlayService : Service() {
                 "reload" -> reloadConfig()
                 "picker" -> openPicker()
                 "test" -> openTestPicker()
+                "showMarkers" -> showMarkers(i?.getStringExtra("steps"))
+                "hideMarkers" -> hideMarkers()
             }
         }
     }
@@ -1124,6 +1130,111 @@ class OverlayService : Service() {
             "取点 " + steps.size + " 个步骤 -> 分组下 " + targets.size + " 个时间点：" + detail
         )
         sendBroadcast(Intent(LogBus.ACTION_CONFIG).setPackage(packageName))
+    }
+
+    /**
+     * 启用时间点时在屏幕上常驻显示该时间点所有步骤的坐标标记（十字+圆框）。
+     * [stepsJson] 为 Flutter 传来的步骤 JSON 数组（每项含 x/y/sw/sh）。
+     * 坐标经 [TapMath.mapToCurrentScreen] 从取点时的屏幕换算到当前屏幕，避免缩放偏移。
+     */
+    private fun showMarkers(stepsJson: String?) {
+        if (stepsJson.isNullOrBlank()) return
+        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+            LogBus.add(applicationContext, "WARN", "缺少悬浮窗权限，无法显示坐标标记")
+            return
+        }
+        val dm = resources.displayMetrics
+        val cw = dm.widthPixels
+        val ch = dm.heightPixels
+        val coords = ArrayList<IntArray>()
+        try {
+            val arr = JSONArray(stepsJson)
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                coords.add(
+                    TapMath.mapToCurrentScreen(
+                        o.optInt("x", 0), o.optInt("y", 0),
+                        o.optInt("sw", 0), o.optInt("sh", 0), cw, ch
+                    )
+                )
+            }
+        } catch (t: Throwable) {
+            LogBus.add(applicationContext, "ERROR", "坐标标记解析失败: " + t)
+            return
+        }
+        if (coords.isEmpty()) {
+            hideMarkers()
+            return
+        }
+        try {
+            // 先移除旧的，避免多个时间点叠加导致标记混乱（需求：同一时间只显示一个时间点的标记）
+            hideMarkers()
+            val cv = MarkersView(coords)
+            val type = if (Build.VERSION.SDK_INT >= 26)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                WindowManager.LayoutParams.TYPE_PHONE
+            val lp = WindowManager.LayoutParams(
+                cw, ch, type,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+            )
+            lp.gravity = Gravity.TOP or Gravity.START
+            wm.addView(cv, lp)
+            markers = cv
+            markersLp = lp
+            LogBus.add(
+                applicationContext, "OK",
+                "已显示 " + coords.size + " 个坐标标记（十字+圆框）"
+            )
+        } catch (t: Throwable) {
+            LogBus.add(applicationContext, "ERROR", "坐标标记显示失败: " + t)
+        }
+    }
+
+    /** 关闭时间点时移除屏幕上的坐标标记层。 */
+    private fun hideMarkers() {
+        markers?.let { try { wm.removeView(it) } catch (_: Exception) {} }
+        markers = null
+        markersLp = null
+    }
+
+    /**
+     * 全屏透明坐标标记层：在指定坐标处画「十字 + 圆框」。
+     * 窗口带 FLAG_NOT_TOUCHABLE，触摸直接穿透到下层 App，仅作视觉回显。
+     */
+    private inner class MarkersView(private val coords: List<IntArray>) : View(this@OverlayService) {
+        private val ring = Paint().apply {
+            color = Color.parseColor("#FF6750A4"); strokeWidth = 6f; style = Paint.Style.STROKE; isAntiAlias = true
+        }
+        private val fill = Paint().apply { color = Color.parseColor("#336750A4"); style = Paint.Style.FILL }
+        private val cross = Paint().apply {
+            color = Color.parseColor("#FF6750A4"); strokeWidth = 4f; style = Paint.Style.STROKE; isAntiAlias = true
+        }
+        // 步骤序号：白字加粗，居中画在圆框内，标识点按顺序
+        private val num = Paint().apply {
+            color = Color.parseColor("#FFFFFFFF"); textAlign = Paint.Align.CENTER; isAntiAlias = true
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            for ((idx, c) in coords.withIndex()) {
+                val px = c[0].toFloat()
+                val py = c[1].toFloat()
+                canvas.drawCircle(px, py, dp(26).toFloat(), fill)
+                canvas.drawCircle(px, py, dp(26).toFloat(), ring)
+                canvas.drawLine(px - dp(46), py, px + dp(46), py, cross)
+                canvas.drawLine(px, py - dp(46), px, py + dp(46), cross)
+                // 序号自适应字号（阶数越大字越小，避免溢出圆框），并垂直居中微调
+                num.textSize = if (coords.size <= 9) dp(22).toFloat() else dp(16).toFloat()
+                num.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+                val baseline = py - (num.descent() + num.ascent()) / 2f
+                val label = if (idx < 9) (idx + 1).toString() else "•"
+                canvas.drawText(label, px, baseline, num)
+            }
+        }
     }
 
     /** 全屏透明取点层：按下即记录该点屏幕坐标，并画十字标记回显。 */
