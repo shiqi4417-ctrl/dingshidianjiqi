@@ -4,12 +4,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:scheduled_tapper/main.dart';
 import 'package:scheduled_tapper/models.dart';
 
-/// 悬浮窗「选点导入」的接入验证（Flutter 侧）。
+/// 悬浮窗「取点」的接入验证（Flutter 侧）。
 ///
 /// Android 的 WindowManager 悬浮窗本身无法在 Flutter/JVM 测试环境渲染（已如实说明），
 /// 因此这里验证的是**接入点与联动链路**：
-///  1. 主界面存在唤起入口，点击后确实请求原生打开选点面板
-///  2. 未授权悬浮窗时不唤起，而是提示并跳转系统设置
+///  1. 步骤行菜单提供「重新取点」入口，点击后确实请求原生进入取点模式
+///  2. 未授权悬浮窗时不进入取点，而是提示并跳转系统设置
 ///  3. 原生写入配置后通过 configChanged 事件让主界面刷新（界面与持久化不脱节）
 ///  4. 取消取点后迟到的坐标事件不会误写入旧时间点（取消不产生写入）
 
@@ -35,7 +35,6 @@ class _PickEvents {
   }
 }
 
-/// 模拟原生通道；返回 pick 事件流的推送句柄，便于测试中主动推送原生事件。
 _PickEvents _mockNative(
   String Function() configJson, {
   List<String>? calls,
@@ -72,8 +71,6 @@ _PickEvents _mockNative(
   }
   messenger.setMockStreamHandler(
     _pickChannel,
-    // 注意：这里必须是块体。箭头函数会把赋值结果（sink 对象）当作返回值回给框架，
-    // 导致 StandardMethodCodec 无法编码而抛 PlatformException。
     MockStreamHandler.inline(onListen: (args, sink) {
       events.sink = sink;
     }),
@@ -83,70 +80,95 @@ _PickEvents _mockNative(
 
 String _cfgJson(List<TimePoint> points) => TapperConfig(points: points).toJsonString();
 
+/// 展开第一个时间点卡片（平铺展示，卡片默认收起）。
+Future<void> _expandFirstCard(WidgetTester tester) async {
+  await tester.tap(find.text('08时 05分 30秒'));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('悬浮窗选点导入 · 唤起入口', () {
-    testWidgets('状态卡片存在「选点导入」入口，点击后请求原生打开面板', (tester) async {
+  group('悬浮窗取点 · 唤起入口', () {
+    testWidgets('步骤行菜单提供「重新取点」，点击后请求原生进入取点模式', (tester) async {
       _setPhoneSurface(tester);
       final calls = <String>[];
-      _mockNative(() => _cfgJson([TimePoint(hour: 8, minute: 5, second: 30)]), calls: calls);
+      _mockNative(
+        () => _cfgJson([
+          TimePoint(hour: 8, minute: 5, second: 30, steps: [
+            TapStep(x: 100, y: 200, delayMs: 200, sw: 1080, sh: 2400),
+          ]),
+        ]),
+        calls: calls,
+      );
 
       await tester.pumpWidget(const MaterialApp(home: HomePage()));
       await tester.pumpAndSettle();
+      await _expandFirstCard(tester);
 
-      expect(find.text('选点导入'), findsOneWidget, reason: '主界面应有唤起悬浮窗选点面板的入口');
-
-      await tester.tap(find.text('选点导入'));
+      // 展开后能看到步骤行；打开步骤操作菜单 -> 重新取点
+      await tester.tap(find.byTooltip('步骤操作').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('重新取点'));
       await tester.pumpAndSettle();
 
-      expect(calls, contains('showOverlay'), reason: '应先确保悬浮窗已显示');
-      expect(calls, contains('openPicker'), reason: '应请求原生展开选点面板');
+      expect(calls, contains('enterPickMode'), reason: '应请求原生进入取点模式');
     });
 
-    testWidgets('未授权悬浮窗：提示并跳转设置，不打开选点面板', (tester) async {
+    testWidgets('未授权悬浮窗：提示并跳转设置，不进入取点模式', (tester) async {
       _setPhoneSurface(tester);
       final calls = <String>[];
-      _mockNative(() => _cfgJson([TimePoint(hour: 8)]), calls: calls, overlay: false);
+      _mockNative(
+        () => _cfgJson([
+          TimePoint(hour: 8, minute: 5, second: 30, steps: [
+            TapStep(x: 100, y: 200, delayMs: 200, sw: 1080, sh: 2400),
+          ]),
+        ]),
+        calls: calls,
+        overlay: false,
+      );
 
       await tester.pumpWidget(const MaterialApp(home: HomePage()));
       await tester.pumpAndSettle();
+      await _expandFirstCard(tester);
 
-      await tester.tap(find.text('选点导入'));
+      await tester.tap(find.byTooltip('步骤操作').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('重新取点'));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('显示在其他应用上层'), findsOneWidget, reason: '应给出授权提示');
       expect(calls, contains('openOverlaySettings'), reason: '应跳转悬浮窗授权设置');
-      expect(calls, isNot(contains('openPicker')), reason: '未授权时不应尝试打开面板');
+      expect(calls, isNot(contains('enterPickMode')), reason: '未授权时不应进入取点模式');
     });
   });
 
-  group('悬浮窗选点导入 · 写入后主界面同步', () {
+  group('悬浮窗取点 · 写入后主界面同步', () {
     testWidgets('收到 configChanged 事件后重新读取配置并刷新界面', (tester) async {
       _setPhoneSurface(tester);
-      // 初始：1 个时间点、0 步
-      var json = _cfgJson([TimePoint(hour: 8, minute: 5, second: 30)]);
+      var json = _cfgJson([
+        TimePoint(hour: 8, minute: 5, second: 30, steps: [
+          TapStep(x: 540, y: 1200, delayMs: 200, sw: 1080, sh: 2400),
+        ]),
+      ]);
       final pick = _mockNative(() => json);
 
       await tester.pumpWidget(const MaterialApp(home: HomePage()));
       await tester.pumpAndSettle();
-      // 本轮改动：分组与组内时间点默认收起，先展开
-      await tester.tap(find.text('未分组'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('08时 05分 30秒'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('0 步'), findsOneWidget, reason: '初始应有 0 步的时间点');
+      await _expandFirstCard(tester);
+      expect(find.textContaining('1 步'), findsOneWidget, reason: '初始应有 1 步的时间点');
 
       // 模拟：悬浮窗内确认导入 -> 原生写入 Prefs 并广播 configChanged
       json = _cfgJson([
         TimePoint(hour: 8, minute: 5, second: 30, steps: [
           TapStep(x: 540, y: 1200, delayMs: 200, sw: 1080, sh: 2400),
+          TapStep(x: 10, y: 20, delayMs: 150, sw: 1080, sh: 2400),
         ]),
       ]);
       pick.success(<String, dynamic>{'configChanged': true});
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('1 步'), findsOneWidget, reason: '主界面应刷新为原生写入后的最新配置');
+      expect(find.textContaining('2 步'), findsOneWidget, reason: '主界面应刷新为原生写入后的最新配置');
     });
   });
 
@@ -155,23 +177,23 @@ void main() {
       _setPhoneSurface(tester);
       final saved = <String>[];
       final pick = _mockNative(
-        () => _cfgJson([TimePoint(hour: 8, minute: 5, second: 30)]),
+        () => _cfgJson([
+          TimePoint(hour: 8, minute: 5, second: 30, steps: [
+            TapStep(x: 100, y: 200, delayMs: 200, sw: 1080, sh: 2400),
+          ]),
+        ]),
         saved: saved,
       );
 
       await tester.pumpWidget(const MaterialApp(home: HomePage()));
       await tester.pumpAndSettle();
+      await _expandFirstCard(tester);
 
-      // 本轮改动：分组与组内时间点默认收起，先展开
-      await tester.tap(find.text('未分组'));
+      // 进入取点模式前的初始化保存忽略，聚焦「取消取点之后是否有新写入」
+      saved.clear();
+      await tester.tap(find.byTooltip('步骤操作').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('08时 05分 30秒'));
-      await tester.pumpAndSettle();
-
-      final addStep = find.text('悬浮窗取点添加步骤');
-      await tester.ensureVisible(addStep);
-      await tester.pumpAndSettle();
-      await tester.tap(addStep);
+      await tester.tap(find.text('重新取点'));
       await tester.pumpAndSettle();
 
       pick.success(<String, dynamic>{'active': true});
@@ -184,7 +206,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(saved, isEmpty, reason: '取消取点后不应向原生写入任何配置');
-      expect(find.textContaining('0 步'), findsOneWidget, reason: '时间点步数应保持不变');
+      expect(find.textContaining('1 步'), findsOneWidget, reason: '时间点步数应保持不变');
     });
   });
 }

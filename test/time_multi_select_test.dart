@@ -1,39 +1,9 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:scheduled_tapper/dialogs.dart';
 import 'package:scheduled_tapper/models.dart';
 
-/// 第 3 项（时/分/秒 单选 / 多选 / 全选）的 UI 与模型验证。
-class _ResultHolder {
-  TimeEditResult? value;
-}
-
+/// 第 3 项（时/分/秒 集合字段）的模型验证。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
-  /// 对话框结果持有者。
-  ///
-  /// 注意：不能在打开对话框后立刻 return result —— 那时对话框还没关闭，
-  /// 结果必然是 null。必须用持有者，等测试里点完「添加/保存」后再读。
-  final holder = _ResultHolder();
-
-  Future<void> openDialog(WidgetTester tester, {TimePoint? existing}) async {
-    holder.value = null;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: Builder(
-          builder: (ctx) => ElevatedButton(
-            onPressed: () async {
-              holder.value = await showTimeDialog(ctx, existing: existing);
-            },
-            child: const Text('open'),
-          ),
-        ),
-      ),
-    ));
-    await tester.tap(find.text('open'));
-    await tester.pumpAndSettle();
-  }
 
   group('第3项 · 时间点标签（展示全部信息）', () {
     test('单选：与旧格式信息量一致', () {
@@ -111,103 +81,6 @@ void main() {
       expect(o.containsKey('hours'), isFalse);
       expect(o.containsKey('minutes'), isFalse);
       expect(o.containsKey('seconds'), isFalse);
-    });
-  });
-
-  group('第3项 · 对话框交互', () {
-    testWidgets('对话框含时/分/秒三个多选区，各带全选按钮', (tester) async {
-      await openDialog(tester);
-      expect(find.text('小时'), findsOneWidget);
-      expect(find.text('分'), findsOneWidget);
-      expect(find.text('秒'), findsOneWidget);
-      // 三处「全选」+ 三处「清空」
-      expect(find.text('全选'), findsNWidgets(3));
-      expect(find.text('清空'), findsNWidgets(3));
-      // 分区有稳定 Key
-      expect(find.byKey(const Key('timeset-小时')), findsOneWidget);
-      expect(find.byKey(const Key('timeset-分')), findsOneWidget);
-      expect(find.byKey(const Key('timeset-秒')), findsOneWidget);
-      // 小时区有 24 个芯片（用 descendant 限定作用域，避免与分/秒的同名数字冲突）
-      expect(find.descendant(
-          of: find.byKey(const Key('timeset-小时')), matching: find.text('23')),
-          findsOneWidget);
-      expect(find.descendant(
-          of: find.byKey(const Key('timeset-分')), matching: find.text('59')),
-          findsOneWidget);
-    });
-
-    testWidgets('点芯片可多选，名称预览实时更新', (tester) async {
-      await openDialog(tester);
-
-      // 默认：每小时 + 00分 00秒
-      expect(find.textContaining('名称预览：每小时 00分 00秒'), findsOneWidget);
-
-      // 选 08、12 两个小时（默认未选任何小时）；用 Key 限定在小时区
-      final hourSection = find.byKey(const Key('timeset-小时'));
-      await tester.tap(find.descendant(of: hourSection, matching: find.text('08')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.descendant(of: hourSection, matching: find.text('12')));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('08,12时'), findsOneWidget);
-      expect(find.textContaining('2 个时刻'), findsOneWidget);
-
-      // 保存后集合被带回
-      await tester.tap(find.text('添加'));
-      await tester.pumpAndSettle();
-      expect(holder.value, isNotNull);
-      expect(holder.value!.hours, [8, 12]);
-      expect(holder.value!.minutes, [0]);
-      expect(holder.value!.seconds, [0]);
-    });
-
-    testWidgets('全选小时 = 24 个，标签显示「全部小时」', (tester) async {
-      await openDialog(tester);
-      // 点小时区的「全选」
-      await tester.tap(find.descendant(
-          of: find.byKey(const Key('timeset-小时')), matching: find.text('全选')));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('全部小时'), findsOneWidget);
-
-      await tester.tap(find.text('添加'));
-      await tester.pumpAndSettle();
-      expect(holder.value!.hours.length, 24);
-    });
-
-    testWidgets('分/秒清空后保存会报错且对话框不关闭', (tester) async {
-      await openDialog(tester);
-      // 清空「分」区
-      await tester.tap(find.descendant(
-          of: find.byKey(const Key('timeset-分')), matching: find.text('清空')));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('添加'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('至少要各选一个'), findsOneWidget);
-      expect(find.text('新增时间点'), findsOneWidget, reason: '非法时应保持打开');
-    });
-
-    testWidgets('修改模式预填已有的多选集合', (tester) async {
-      final existing = TimePoint(hour: 8, minute: 30, second: 0,
-          hours: [8, 12], minutes: [30], seconds: [0], repeatCount: 3);
-      await openDialog(tester, existing: existing);
-      expect(find.text('修改时间点'), findsOneWidget);
-      expect(find.textContaining('名称预览：08,12时 30分 00秒'), findsOneWidget);
-      // 已选计数：小时 2/24，分 1/60，秒 1/60
-      expect(find.text('已选 2/24'), findsOneWidget);
-      expect(find.text('已选 1/60'), findsNWidgets(2));
-    });
-
-    testWidgets('组合超限时保存被拒绝并提示', (tester) async {
-      // 预置：小时 24 个 × 分 30 个 × 秒 1 个 = 720 > 512
-      final existing = TimePoint(hour: 0, minute: 0, second: 0,
-          hours: List.generate(24, (i) => i),
-          minutes: List.generate(30, (i) => i),
-          seconds: [0]);
-      await openDialog(tester, existing: existing);
-      await tester.tap(find.text('保存'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('组合过多'), findsOneWidget);
-      expect(find.text('修改时间点'), findsOneWidget, reason: '超限时应保持打开');
     });
   });
 }

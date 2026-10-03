@@ -51,8 +51,8 @@ void main() {
       );
       final back = TapperConfig.fromJsonString(cfg.toJsonString());
       expect(back.points.single.hour, 8);
-      expect(back.groups.length, 2);
-      expect(back.groups[1].name, '早班');
+      expect(back.groups.length, 1);
+      expect(back.groups[0].name, '早班');
       expect(back.timeSource, 'beijing');
       expect(back.timeOffsetMs, 200);
     });

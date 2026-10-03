@@ -142,7 +142,8 @@ void main() {
       await tester.pumpAndSettle();
 
       final fields = find.byType(TextField);
-      expect(fields, findsNWidgets(2), reason: '重复次数 + 重复间隔两个输入框');
+      // 重复次数 + 间隔 + 新建分组名称（existing 无分组时进入「新建分组」）
+      expect(fields, findsNWidgets(3), reason: '重复次数 + 间隔 + 新建分组名共三个输入框');
 
       await tester.enterText(fields.at(0), '6');
       await tester.enterText(fields.at(1), '750');
@@ -334,9 +335,7 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: HomePage()));
       await tester.pumpAndSettle();
 
-      // 本轮改动：分组与组内时间点均默认收起，先展开才能看到步骤行
-      await tester.tap(find.text('未分组'));
-      await tester.pumpAndSettle();
+      // 时间点卡片默认收起，先展开才能看到步骤行
       await tester.tap(find.text('08时 05分 30秒'));
       await tester.pumpAndSettle();
 
