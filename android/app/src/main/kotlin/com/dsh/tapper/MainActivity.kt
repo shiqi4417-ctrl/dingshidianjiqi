@@ -15,6 +15,20 @@ class MainActivity : FlutterActivity() {
         requestNotificationPermissionIfNeeded()
     }
 
+    /**
+     * 按返回键退出（isFinishing=true）时，视为「停止运行 APP」：
+     * 连同 [OverlayService.stopSchedulingFromAppExit] 一起停用全部定时任务。
+     *
+     * 注意：横竖屏旋转也会 destroy Activity，但此时 isFinishing=false，
+     * 不会误关定时任务（旋转不应打扰后台常驻）。
+     */
+    override fun onDestroy() {
+        if (isFinishing) {
+            OverlayService.stopSchedulingFromAppExit(applicationContext)
+        }
+        super.onDestroy()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         flutterEngine.plugins.add(TapperPlugin())

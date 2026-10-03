@@ -288,6 +288,21 @@ class OverlayService : Service() {
         super.onDestroy()
     }
 
+    /**
+     * 用户从最近任务划掉本应（= 停止运行 APP）时触发（前台服务常驻，因此能收到该回调）。
+     *
+     * 用户诉求（修复 BUG）：退出 APP 时，已启用的定时任务应当被关掉，不然重新进入后
+     * 定时任务还是开着的。这里把全部时间点置为停用并持久化、隐藏坐标标记、停止调度与服务，
+     * 保证下次进入都是「关闭」状态。
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        try {
+            stopSchedulingFromAppExit(applicationContext)
+        } finally {
+            super.onTaskRemoved(rootIntent)
+        }
+    }
+
     // ---------------- 配置 ----------------
 
     private fun reloadConfig() {
@@ -1306,5 +1321,32 @@ class OverlayService : Service() {
         @Volatile
         var schedulerRef: Scheduler? = null
             private set
+
+        /**
+         * 停止运行 APP 时的统一收尾：把全部时间点置为停用并持久化 + 隐藏坐标标记 + 停止调度与服务。
+         *
+         * 触发点：
+         *  - [OverlayService.onTaskRemoved]：从最近任务划掉本应用
+         *  - [MainActivity.onDestroy]（isFinishing）：按返回键退出
+         * 两者都视为「用户停止运行 APP」，让已启用的定时任务随之关闭，避免下次进入还开着。
+         */
+        fun stopSchedulingFromAppExit(ctx: Context) {
+            try {
+                val cfg = Prefs.load(ctx)
+                val disabled = cfg.copy(points = cfg.points.map { it.copy(enabled = false) })
+                Prefs.save(ctx, disabled)
+                // 隐藏屏幕上的坐标标记（服务若存活，收到广播后移除；否则无副作用）
+                ctx.sendBroadcast(
+                    Intent(LogBus.ACTION_CMD).setPackage(ctx.packageName).putExtra("cmd", "hideMarkers")
+                )
+                // 停止调度与前台服务
+                schedulerRef?.stop()
+                schedulerRef = null
+                ctx.stopService(Intent(ctx, OverlayService::class.java))
+                LogBus.add(ctx, "WARN", "已停止运行 APP：已停用全部定时任务，重新进入后均为关闭状态")
+            } catch (t: Throwable) {
+                LogBus.add(ctx, "ERROR", "退出收尾异常: " + t)
+            }
+        }
     }
 }
