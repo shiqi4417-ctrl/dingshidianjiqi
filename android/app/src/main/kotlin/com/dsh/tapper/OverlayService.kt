@@ -1050,10 +1050,19 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         val lp = WindowManager.LayoutParams(
             dm.widthPixels, dm.heightPixels, type,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            // FLAG_LAYOUT_NO_LIMITS：在挖孔屏/刘海屏上强制窗口布局到完整屏幕外框，突破挖孔让位，
+            // 使窗口坐标==屏幕坐标((0,0) 为屏幕原点)，保证取点十字回显与保存的 rawX/rawY 一致。
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         )
         lp.gravity = Gravity.TOP or Gravity.START
+        // 挖孔屏（Display Cutout）：允许布局进挖孔区，保证窗口 (0,0)=屏幕原点（API 28+）
+        if (Build.VERSION.SDK_INT >= 28) {
+            lp.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         val cv = CatcherView()
         try {
             wm.addView(cv, lp)
@@ -1201,10 +1210,19 @@ class OverlayService : Service() {
                 cw, ch, type,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                     or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                    or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                    // 挖孔屏/刘海屏让位会导致窗口坐标偏移，标记画在 rawX/rawY（屏幕绝对坐标）就会整体偏移。
+                    // 加 FLAG_LAYOUT_NO_LIMITS 强制铺满完整屏幕，使窗口坐标==屏幕坐标，与点击 dispatchGesture 对齐。
+                    or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
             )
             lp.gravity = Gravity.TOP or Gravity.START
+            // 挖孔屏（Display Cutout）：显式允许内容布局进挖孔区，避免系统把窗口限制在
+            // 「避让挖孔的安全区」，保证窗口 (0,0) 就是屏幕原点（API 28+）。
+            if (Build.VERSION.SDK_INT >= 28) {
+                lp.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
             wm.addView(cv, lp)
             markers = cv
             markersLp = lp
