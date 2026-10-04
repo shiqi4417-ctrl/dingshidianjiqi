@@ -26,6 +26,8 @@ class _HomePageState extends State<HomePage> {
   StreamSubscription<dynamic>? _pickSub;
   String _pickTarget = '';
   bool _pickMode = false;
+  /// 本次启动是否有定时任务被自动关闭（用于启动后提示用户手动开启）。
+  bool _startupReset = false;
   final ScrollController _logScroll = ScrollController();
 
   @override
@@ -87,9 +89,24 @@ class _HomePageState extends State<HomePage> {
       if (_cfg.timeSource != 'beijing') {
         _cfg.timeSource = 'beijing';
       }
+      // 需求（v1.8.4）：每次打开 APP 都自动关闭所有定时，需用户手动逐个开启。
+      // 在冷启动入口强制复位，比「退出瞬间复位」更可靠（不依赖退出回调是否触发）。
+      var anyEnabled = false;
+      for (final p in _cfg.points) {
+        if (p.enabled) {
+          p.enabled = false;
+          anyEnabled = true;
+        }
+      }
+      _startupReset = anyEnabled;
     });
     await _save();
+    await Native.hidePointMarkers();
     await Native.startService();
+    if (_startupReset) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _toast('已自动关闭所有定时任务，请手动逐个开启'));
+    }
+    _startupReset = false;
     await _refresh();
   }
 

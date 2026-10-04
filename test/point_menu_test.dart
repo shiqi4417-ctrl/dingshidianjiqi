@@ -237,6 +237,12 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: HomePage()));
       await tester.pumpAndSettle();
 
+      // 新需求：打开 APP 会自动关闭所有定时。这里模拟用户手动开启该时间点，再复制。
+      await tester.tap(find.byType(Switch).first);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Switch>(find.byType(Switch).first).value, isTrue,
+          reason: '用户手动开启后应为开启状态');
+
       await tester.longPress(find.text('08时 05分 30秒'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('复制'));

@@ -1287,6 +1287,14 @@ class OverlayService : Service() {
                 val sx = e.rawX.toInt()
                 val sy = e.rawY.toInt()
                 val dm = resources.displayMetrics
+                // 诊断：对比「取点十字(view-local e.x/e.y)」与「保存坐标(rawX/rawY)」，
+                // 若两者有偏移即可解释「同一手机取点后标记不一致」。
+                LogBus.add(
+                    applicationContext, "DIAG",
+                    ("取点 十字(e.x,e.y)=" + e.x.toInt() + "," + e.y.toInt() +
+                        " 保存(rawX,rawY)=" + sx + "," + sy +
+                        " 屏" + dm.widthPixels + "x" + dm.heightPixels)
+                )
                 LogBus.add(
                     applicationContext, "PICK",
                     "记录坐标(" + sx + "," + sy + ") 当前屏幕 " + dm.widthPixels + "x" + dm.heightPixels
